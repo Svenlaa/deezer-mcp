@@ -132,7 +132,15 @@ export function registerTools(server: McpServer, client: DeezerClient): void {
                 repeatMode: st.repeatMode ?? null,
                 queueConfiguration: parseJsonField(st.queueConfiguration),
                 size: st.queue?.size ?? mediaList.length,
-                contexts: contexts.map((c) => ({ id: c.id, ...(parseJsonField(c.content) as object) })),
+                contexts: contexts.map((c) => {
+                    const parsed = parseJsonField(c.content);
+                    return {
+                        id: c.id,
+                        ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                            ? parsed
+                            : { content: parsed }),
+                    };
+                }),
                 tracks: await Promise.all(
                     slice.map(async (m, i) => ({
                         index: start + i,
