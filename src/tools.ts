@@ -18,6 +18,17 @@ const playlistIdSchema = z
     .regex(/^\d+$/, 'must be a numeric Deezer playlist id, e.g. "9431754082"')
     .describe('Deezer playlist id, e.g. "9431754082"');
 
+const albumIdSchema = z
+    .string()
+    .regex(/^\d+$/, 'must be a numeric Deezer album id, e.g. "302127"')
+    .describe('Deezer album id, e.g. "302127"');
+
+const trackIdsSchema = z
+    .array(trackIdSchema)
+    .min(1)
+    .max(500)
+    .describe('Deezer track ids to add/remove');
+
 const flowConfigIdSchema = z
     .string()
     .regex(/^[\w-]+$/, 'letters, digits, underscores and hyphens only, e.g. "genre-pop"')
@@ -378,6 +389,136 @@ export function registerTools(server: McpServer, client: DeezerClient): void {
                     })),
                 ),
             });
+        },
+    );
+
+    // ── playlist CRUD ───────────────────────────────────────────────────────
+    server.registerTool(
+        'create_playlist',
+        {
+            title: 'Create Playlist',
+            description: 'Create a new playlist on the account. Returns the created playlist (looked up by title).',
+            inputSchema: {
+                title: z.string().min(1).max(120).describe('Playlist title'),
+                description: z.string().max(2000).optional().describe('Playlist description'),
+                isPrivate: z.boolean().optional().default(false).describe('Private playlist (default: false)'),
+                isCollaborative: z.boolean().optional().default(false).describe('Allow others to add tracks (default: false)'),
+            },
+            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        },
+        async (args) => {
+            await client.createPlaylist({
+                title: args.title,
+                ...(args.description !== undefined ? { description: args.description } : {}),
+                isPrivate: args.isPrivate,
+                isCollaborative: args.isCollaborative,
+            });
+            const playlist = await client.findPlaylistByTitle(args.title);
+            return json({ created: true, playlist });
+        },
+    );
+
+    server.registerTool(
+        'update_playlist',
+        {
+            title: 'Update Playlist',
+            description: 'Rename or change settings of a playlist (id from playlists or recently_played). Only provided fields are changed.',
+            inputSchema: {
+                playlistId: playlistIdSchema,
+                title: z.string().min(1).max(120).optional().describe('New title'),
+                description: z.string().max(2000).optional().describe('New description'),
+                isPrivate: z.boolean().optional().describe('New privacy setting'),
+                isCollaborative: z.boolean().optional().describe('New collaborative setting'),
+            },
+            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+        },
+        async (args) => {
+            const { playlistId, ...patch } = args;
+            await client.updatePlaylist(playlistId, patch);
+            return json({ updated: playlistId, changes: patch });
+        },
+    );
+
+    server.registerTool(
+        'delete_playlist',
+        {
+            title: 'Delete Playlist',
+            description: 'Permanently delete a playlist from the account.',
+            inputSchema: { playlistId: playlistIdSchema },
+            annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+        },
+        async (args) => {
+            await client.deletePlaylist(args.playlistId);
+            return json({ deleted: args.playlistId });
+        },
+    );
+
+    server.registerTool(
+        'add_tracks_to_playlist',
+        {
+            title: 'Add Tracks To Playlist',
+            description: 'Append tracks to the end of a playlist.',
+            inputSchema: {
+                playlistId: playlistIdSchema,
+                trackIds: trackIdsSchema,
+            },
+            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        },
+        async (args) => {
+            await client.addTracksToPlaylist(args.playlistId, args.trackIds);
+            return json({ playlistId: args.playlistId, added: args.trackIds.length, trackIds: args.trackIds });
+        },
+    );
+
+    server.registerTool(
+        'remove_tracks_from_playlist',
+        {
+            title: 'Remove Tracks From Playlist',
+            description: 'Remove tracks from a playlist by track id.',
+            inputSchema: {
+                playlistId: playlistIdSchema,
+                trackIds: trackIdsSchema,
+            },
+            annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+        },
+        async (args) => {
+            await client.removeTracksFromPlaylist(args.playlistId, args.trackIds);
+            return json({ playlistId: args.playlistId, removed: args.trackIds.length, trackIds: args.trackIds });
+        },
+    );
+
+    server.registerTool(
+        'move_track_in_playlist',
+        {
+            title: 'Move Track In Playlist',
+            description: 'Move a track within a playlist to a new position (after afterTrackId, or to the top if omitted).',
+            inputSchema: {
+                playlistId: playlistIdSchema,
+                trackId: trackIdSchema,
+                afterTrackId: trackIdSchema.optional().describe('Track after which to insert; omit for the top'),
+            },
+            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+        },
+        async (args) => {
+            await client.moveTrackInPlaylist(args.playlistId, args.trackId, args.afterTrackId);
+            return json({ playlistId: args.playlistId, trackId: args.trackId, afterTrackId: args.afterTrackId ?? null });
+        },
+    );
+
+    server.registerTool(
+        'append_album_to_playlist',
+        {
+            title: 'Append Album To Playlist',
+            description: 'Append all tracks of an album to the end of a playlist.',
+            inputSchema: {
+                playlistId: playlistIdSchema,
+                albumId: albumIdSchema,
+            },
+            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        },
+        async (args) => {
+            await client.appendAlbumToPlaylist(args.playlistId, args.albumId);
+            return json({ playlistId: args.playlistId, albumId: args.albumId });
         },
     );
 

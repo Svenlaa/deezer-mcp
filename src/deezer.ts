@@ -108,6 +108,28 @@ const TRACK_SEL = `id title duration isrc bpm popularity isExplicit isFavorite
 const PLAYLIST_TRACK_SEL = `id title duration isExplicit contributorNames
     album { id displayTitle }`;
 
+/**
+ * Serialize an object as a GraphQL input-object literal. JSON.stringify is NOT
+ * valid here — GraphQL input keys are bare names, not quoted strings (verified
+ * live: `{"k":…}` is rejected, `{ k: … }` works). String values go through
+ * JSON.stringify, which matches GraphQL string escaping, so this stays
+ * injection-safe.
+ */
+function gqlInput(obj: Record<string, unknown>): string {
+    const pairs = Object.entries(obj)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => `${k}: ${gqlValue(v)}`);
+    return `{ ${pairs.join(', ')} }`;
+}
+
+function gqlValue(v: unknown): string {
+    if (typeof v === 'string') return JSON.stringify(v);
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (Array.isArray(v)) return `[${v.map(gqlValue).join(', ')}]`;
+    if (v && typeof v === 'object') return gqlInput(v as Record<string, unknown>);
+    return 'null';
+}
+
 export class DeezerClient {
     readonly config: DeezerMcpConfig;
     private jwtCache: { token: string; exp: number } | null = null;
@@ -448,6 +470,74 @@ export class DeezerClient {
 
     async unlikeTrack(trackId: string): Promise<void> {
         await this.pipe(`mutation { removeTrackFromFavorite(trackId: ${JSON.stringify(trackId)}) { __typename } }`);
+    }
+
+    // ── Playlist CRUD ───────────────────────────────────────────────────────
+    // Mutation outputs only expose a `vast` field, so tools echo the input and
+    // create_playlist additionally looks the new playlist up by title.
+
+    async createPlaylist(input: {
+        title: string;
+        description?: string;
+        isPrivate: boolean;
+        isCollaborative: boolean;
+    }): Promise<unknown> {
+        return this.pipe(
+            `mutation { createPlaylist(input: ${gqlInput(input)}) { __typename } }`,
+        );
+    }
+
+    async findPlaylistByTitle(title: string, scan = 50): Promise<unknown | null> {
+        const list = await this.playlists(scan);
+        return list.find((p) => (p as { title?: string }).title === title) ?? null;
+    }
+
+    async updatePlaylist(
+        playlistId: string,
+        patch: Partial<{
+            title: string;
+            description: string;
+            isPrivate: boolean;
+            isCollaborative: boolean;
+        }>,
+    ): Promise<unknown> {
+        return this.pipe(
+            `mutation { updatePlaylist(input: ${gqlInput({ playlistId, ...patch })}) { __typename } }`,
+        );
+    }
+
+    async deletePlaylist(playlistId: string): Promise<void> {
+        await this.pipe(
+            `mutation { deletePlaylist(input: ${gqlInput({ playlistId })}) { __typename } }`,
+        );
+    }
+
+    async addTracksToPlaylist(playlistId: string, trackIds: string[]): Promise<void> {
+        await this.pipe(
+            `mutation { addTracksToPlaylist(input: ${gqlInput({ playlistId, trackIds })}) { __typename } }`,
+        );
+    }
+
+    async removeTracksFromPlaylist(playlistId: string, trackIds: string[]): Promise<void> {
+        await this.pipe(
+            `mutation { removeTracksFromPlaylist(input: ${gqlInput({ playlistId, trackIds })}) { __typename } }`,
+        );
+    }
+
+    async moveTrackInPlaylist(
+        playlistId: string,
+        trackId: string,
+        afterTrackId?: string,
+    ): Promise<void> {
+        await this.pipe(
+            `mutation { moveTrackInPlaylist(input: ${gqlInput({ playlistId, trackId, afterTrackId })}) { __typename } }`,
+        );
+    }
+
+    async appendAlbumToPlaylist(playlistId: string, albumId: string): Promise<void> {
+        await this.pipe(
+            `mutation { appendAlbumTracksToPlaylist(input: ${gqlInput({ playlistId, albumId })}) { __typename } }`,
+        );
     }
 
     async playlists(limit: number): Promise<unknown[]> {
