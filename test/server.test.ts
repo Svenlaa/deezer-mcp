@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { jwtExp, shareUrl, computePlayback } from '../src/deezer.ts';
+import { jwtExp, shareUrl, computePlayback, gqlInput } from '../src/deezer.ts';
 
 // ── Pure helpers ────────────────────────────────────────────────────────────
 
@@ -51,6 +51,42 @@ describe('computePlayback', () => {
         assert.equal(within.playing, true);
         const past = computePlayback(st, null, Date.parse('2026-11-10T21:11:00.000Z'));
         assert.equal(past.playing, false);
+    });
+});
+
+describe('gqlInput', () => {
+    it('serializes keys as bare GraphQL names, not quoted strings', () => {
+        assert.equal(gqlInput({ playlistId: '123' }), '{ playlistId: "123" }');
+    });
+
+    it('escapes injection attempts in string values', () => {
+        const evil = 'x") { __typename } } mutation { evil';
+        const out = gqlInput({ title: evil });
+        // the whole payload stays inside one quoted GraphQL string literal:
+        // quotes are escaped, so the value cannot break out of it
+        assert.equal(out, `{ title: ${JSON.stringify(evil)} }`);
+        assert.ok(out.includes('\\"'));
+        const value = out.slice('{ title: '.length, -' }'.length);
+        assert.equal(JSON.parse(value), evil);
+    });
+
+    it('filters undefined values', () => {
+        assert.equal(
+            gqlInput({ playlistId: '1', trackId: '2', afterTrackId: undefined }),
+            '{ playlistId: "1", trackId: "2" }',
+        );
+    });
+
+    it('serializes arrays and booleans', () => {
+        assert.equal(
+            gqlInput({ playlistId: '1', trackIds: ['1', '2'], isPrivate: true }),
+            '{ playlistId: "1", trackIds: ["1", "2"], isPrivate: true }',
+        );
+    });
+
+    it('handles empty objects and null', () => {
+        assert.equal(gqlInput({}), '{  }');
+        assert.equal(gqlInput({ a: null }), '{ a: null }');
     });
 });
 

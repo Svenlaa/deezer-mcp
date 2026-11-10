@@ -18,7 +18,7 @@ Built for **Node.js 26+** — runs TypeScript natively with zero build step, use
 | `favorites` | Loved tracks / albums / artists / playlists. |
 | `like_track` / `unlike_track` | Add / remove a track from favorites. |
 | `playlists` / `playlist_tracks` | List own playlists; tracks of a playlist with added-at dates. |
-| `create_playlist` / `update_playlist` / `delete_playlist` | Playlist CRUD. |
+| `create_playlist` / `update_playlist` / `delete_playlist` | Playlist CRUD. New playlists default to **private** (`isPrivate: true`), like the Deezer apps. |
 | `add_tracks_to_playlist` / `remove_tracks_from_playlist` / `move_track_in_playlist` / `append_album_to_playlist` | Manage tracks inside a playlist. |
 | `flow` | The personalized Flow infinite mix. |
 | `made_for_me` | Personalized playlists / smart tracklists ("inspired by…"). |

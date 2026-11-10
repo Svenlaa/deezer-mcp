@@ -401,20 +401,36 @@ export function registerTools(server: McpServer, client: DeezerClient): void {
             inputSchema: {
                 title: z.string().min(1).max(120).describe('Playlist title'),
                 description: z.string().max(2000).optional().describe('Playlist description'),
-                isPrivate: z.boolean().optional().default(false).describe('Private playlist (default: false)'),
+                isPrivate: z.boolean().optional().default(true).describe('Private playlist (default: true, like the Deezer apps)'),
                 isCollaborative: z.boolean().optional().default(false).describe('Allow others to add tracks (default: false)'),
             },
             annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
         },
         async (args) => {
+            // Snapshot ids first: on a duplicate title, a naive title lookup
+            // would return the pre-existing playlist's id and mislead the
+            // caller into writing into it.
+            const before = new Set(
+                (await client.playlists(200)).map((p) => (p as { id: string }).id),
+            );
             await client.createPlaylist({
                 title: args.title,
                 ...(args.description !== undefined ? { description: args.description } : {}),
                 isPrivate: args.isPrivate,
                 isCollaborative: args.isCollaborative,
             });
-            const playlist = await client.findPlaylistByTitle(args.title);
-            return json({ created: true, playlist });
+            const after = await client.playlists(200);
+            const match = after.find(
+                (p) =>
+                    (p as { title?: string }).title === args.title &&
+                    !before.has((p as { id: string }).id),
+            );
+            if (match) return json({ created: true, playlist: match });
+            return json({
+                created: true,
+                playlist: null,
+                note: 'created, but a playlist with this title already existed — list playlists to find the new one',
+            });
         },
     );
 
@@ -434,6 +450,9 @@ export function registerTools(server: McpServer, client: DeezerClient): void {
         },
         async (args) => {
             const { playlistId, ...patch } = args;
+            if (Object.keys(patch).length === 0) {
+                return err('Provide at least one field to change (title, description, isPrivate, isCollaborative).');
+            }
             await client.updatePlaylist(playlistId, patch);
             return json({ updated: playlistId, changes: patch });
         },
@@ -466,7 +485,9 @@ export function registerTools(server: McpServer, client: DeezerClient): void {
         },
         async (args) => {
             await client.addTracksToPlaylist(args.playlistId, args.trackIds);
-            return json({ playlistId: args.playlistId, added: args.trackIds.length, trackIds: args.trackIds });
+            // Mutation outputs carry no per-track status, so this count is the
+            // requested number, not a server-confirmed one.
+            return json({ playlistId: args.playlistId, requested: args.trackIds.length, trackIds: args.trackIds });
         },
     );
 
@@ -483,7 +504,8 @@ export function registerTools(server: McpServer, client: DeezerClient): void {
         },
         async (args) => {
             await client.removeTracksFromPlaylist(args.playlistId, args.trackIds);
-            return json({ playlistId: args.playlistId, removed: args.trackIds.length, trackIds: args.trackIds });
+            // See add_tracks_to_playlist: requested, not server-confirmed.
+            return json({ playlistId: args.playlistId, requested: args.trackIds.length, trackIds: args.trackIds });
         },
     );
 

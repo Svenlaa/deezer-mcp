@@ -113,9 +113,9 @@ const PLAYLIST_TRACK_SEL = `id title duration isExplicit contributorNames
  * valid here — GraphQL input keys are bare names, not quoted strings (verified
  * live: `{"k":…}` is rejected, `{ k: … }` works). String values go through
  * JSON.stringify, which matches GraphQL string escaping, so this stays
- * injection-safe.
+ * injection-safe. Keys must come from code, never user input.
  */
-function gqlInput(obj: Record<string, unknown>): string {
+export function gqlInput(obj: Record<string, unknown>): string {
     const pairs = Object.entries(obj)
         .filter(([, v]) => v !== undefined)
         .map(([k, v]) => `${k}: ${gqlValue(v)}`);
@@ -485,11 +485,6 @@ export class DeezerClient {
         return this.pipe(
             `mutation { createPlaylist(input: ${gqlInput(input)}) { __typename } }`,
         );
-    }
-
-    async findPlaylistByTitle(title: string, scan = 50): Promise<unknown | null> {
-        const list = await this.playlists(scan);
-        return list.find((p) => (p as { title?: string }).title === title) ?? null;
     }
 
     async updatePlaylist(
