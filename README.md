@@ -8,8 +8,8 @@ Built for **Node.js 26+** — runs TypeScript natively with zero build step, use
 
 | Tool | Description |
 |---|---|
-| `now_playing` | What's playing right now, with live elapsed time, cover and a `deezer.com` share link (`?host=` attribution). `mode: live` = actively playing, `last` = last known state. |
-| `queue` | The synced queue around the current position (2 tracks before, then up to `limit` upcoming), with repeat mode, source context (e.g. originating playlist) and resolved titles. |
+| `now_playing` | The last track played on the account (from listening history), with cover and a `deezer.com` share link (`?host=` attribution). Always reported in `last` mode with the scrobble time as start. |
+| `queue` | The synced queue around the current position (2 tracks before, then up to `limit` upcoming), with repeat mode, source context (e.g. originating playlist) and resolved titles (`source: "queue"`). When no client is syncing the queue, falls back to listening history, most recent first (`source: "history"`). |
 | `listening_history` | Recently listened tracks with timestamps, most recent first. |
 | `recently_played` | Recently played albums / playlists / artists / flows (plain tracks are in `listening_history`). |
 | `search` | Search tracks, albums, artists, playlists + top result. |

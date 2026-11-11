@@ -2,8 +2,9 @@ import type { DeezerMcpConfig } from './config.ts';
 
 // --- pipe (new GraphQL API, JWT auth) ------------------------------------
 //
-// The apps push their playback state to Deezer's servers on every play,
-// pause, seek and track change; me.lastKnownQueueState is that state.
+// me.lastKnownQueueState is the playback state clients push on play/pause/
+// seek, but modern clients don't push it reliably — /now reads the
+// listening history instead (see playerState).
 // JWTs live ~6 minutes and are minted by auth.deezer.com/login/renew from
 // the long-lived refresh-token cookie, which alone authenticates (no arl
 // needed). The token does not rotate destructively, so a static value in
@@ -59,6 +60,34 @@ export function computePlayback(
     return { startedAt, elapsed: playing ? positionSec : null, playing };
 }
 
+/**
+ * True when a pushed queue state (lastKnownQueueState) looks like a client
+ * is actively playing right now. Modern clients scrobble to listening
+ * history without pushing queue state, so a stale push means "not live".
+ */
+export function isQueueLive(
+    st: {
+        position?: number;
+        progressMS?: number;
+        updatedAt?: string;
+        queue?: { mediaList?: { id: string }[] };
+    },
+    durationSec: number | null,
+    now: number,
+): boolean {
+    const curId = st.queue?.mediaList?.[st.position ?? 0]?.id;
+    if (curId === undefined) return false;
+    return computePlayback(
+        {
+            position: st.position ?? 0,
+            progressMS: st.progressMS ?? 0,
+            updatedAt: st.updatedAt ?? '',
+        },
+        durationSec,
+        now,
+    ).playing;
+}
+
 // Note: Picture.cover.urls is permission-gated on pipe and Track.artist errors
 // outright — covers and artist names are resolved via the public
 // api.deezer.com/track/{id} endpoint instead (see publicTrack).
@@ -84,7 +113,7 @@ export interface PipeTrack {
 }
 
 export interface NowPlaying {
-    mode: 'live' | 'last';
+    mode: 'last';
     source: 'player';
     track: {
         id: string;
@@ -252,33 +281,28 @@ export class DeezerClient {
         return data.tracksByIds ?? [];
     }
 
-    /** What is playing right now (same logic as the /now endpoint) */
+    /**
+     * Last played track (same logic as the /now endpoint). Deezer's pushed
+     * queue state (lastKnownQueueState) only moves when a client pushes it,
+     * which modern clients don't — listening history always does, so /now
+     * just reports the newest scrobble, always in "last" mode.
+     */
     async playerState(): Promise<NowPlaying | null> {
         const data = await this.pipe<{
             me: {
                 id: string;
-                lastKnownQueueState: {
-                    position: number;
-                    progressMS: number;
-                    updatedAt: string;
-                    queue?: { size: number; mediaList?: { id: string }[] };
-                } | null;
+                listeningHistoryRawTracks?: { id: string; listenedAt: string }[];
             };
-        }>(
-            `{ me { id lastKnownQueueState { position progressMS updatedAt
-                queue { size mediaList { id } } } } }`,
-        );
-        const st = data?.me?.lastKnownQueueState;
-        const id = st?.queue?.mediaList?.[st.position]?.id;
-        if (!st || !id) return null;
+        }>(`{ me { id listeningHistoryRawTracks { id listenedAt } } }`);
+        const last = data?.me?.listeningHistoryRawTracks?.[0];
+        if (!last) return null;
 
-        const meta = await this.publicTrack(id);
+        const meta = await this.publicTrack(last.id);
         const duration = Number(meta?.duration) || null;
-        const { startedAt, elapsed, playing } = computePlayback(st, duration, Date.now());
         const userId = String(data.me?.id ?? '') || this.config.userId || '';
-        const trackId = String(meta?.id ?? id);
+        const trackId = String(meta?.id ?? last.id);
         return {
-            mode: playing ? 'live' : 'last',
+            mode: 'last',
             source: 'player',
             track: {
                 id: trackId,
@@ -289,7 +313,7 @@ export class DeezerClient {
                 cover: meta?.album?.cover_medium ?? null,
                 duration,
             },
-            playback: { startedAt, elapsed },
+            playback: { startedAt: Date.parse(last.listenedAt), elapsed: null },
             now: Date.now(),
         };
     }

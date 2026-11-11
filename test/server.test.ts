@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { jwtExp, shareUrl, computePlayback, gqlInput } from '../src/deezer.ts';
+import { jwtExp, shareUrl, computePlayback, isQueueLive, gqlInput } from '../src/deezer.ts';
 
 // ── Pure helpers ────────────────────────────────────────────────────────────
 
@@ -51,6 +51,29 @@ describe('computePlayback', () => {
         assert.equal(within.playing, true);
         const past = computePlayback(st, null, Date.parse('2026-11-10T21:11:00.000Z'));
         assert.equal(past.playing, false);
+    });
+});
+
+describe('isQueueLive', () => {
+    const now = Date.parse('2026-11-10T21:02:00.000Z');
+    const st = {
+        position: 3,
+        progressMS: 30_000,
+        updatedAt: '2026-11-10T21:00:30.000Z',
+        queue: { mediaList: [{ id: '1' }, { id: '2' }, { id: '3' }, { id: '4' }] },
+    };
+
+    it('is live while the current track is still within its duration', () => {
+        assert.equal(isQueueLive(st, 200, now), true); // 120s elapsed < 200s
+    });
+
+    it('is not live once the current track would have finished', () => {
+        assert.equal(isQueueLive(st, 60, now), false); // 120s elapsed > 60s
+    });
+
+    it('is not live without a current queue entry', () => {
+        assert.equal(isQueueLive({ position: 0, progressMS: 0, updatedAt: '2026-11-10T21:00:30.000Z' }, 200, now), false);
+        assert.equal(isQueueLive({ ...st, queue: { mediaList: [] } }, 200, now), false);
     });
 });
 

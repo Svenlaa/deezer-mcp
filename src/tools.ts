@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { DeezerClient, type PipeTrack } from './deezer.ts';
+import { DeezerClient, isQueueLive, type PipeTrack } from './deezer.ts';
 
 // ---------------------------------------------------------------------------
 // Shared schemas / helpers
@@ -98,9 +98,9 @@ export function registerTools(server: McpServer, client: DeezerClient): void {
         {
             title: 'Now Playing',
             description:
-                'What is playing on the Deezer account right now, with live elapsed time, ' +
-                'cover and a deezer.com share link (?host= attribution). ' +
-                'mode "live" means actively playing, "last" means the last known state.',
+                'The last track played on the Deezer account (from listening history), with ' +
+                'cover and a deezer.com share link (?host= attribution). Always reported in ' +
+                '"last" mode with the scrobble time as start.',
             inputSchema: {},
             annotations: { readOnlyHint: true, openWorldHint: true },
         },
@@ -120,7 +120,9 @@ export function registerTools(server: McpServer, client: DeezerClient): void {
             description:
                 'The synced playback queue around the current position — 2 tracks before it, ' +
                 'then up to `limit` upcoming ("up next") — with repeat mode, the source context ' +
-                '(e.g. which playlist it came from) and resolved track titles.',
+                '(e.g. which playlist it came from) and resolved track titles. ' +
+                'When no client is syncing the queue (stale pushed state), falls back to ' +
+                'listening history, most recent first.',
             inputSchema: {
                 limit: limitSchema(200, 50),
             },
@@ -128,6 +130,30 @@ export function registerTools(server: McpServer, client: DeezerClient): void {
         },
         async (args) => {
             const st = await client.queueState();
+            // The synced queue only moves when a client pushes it; a phone that
+            // merely scrobbles never pushes, leaving the pushed state stale.
+            // When it isn't live, answer from the real listening history instead.
+            const curId = st.queue?.mediaList?.[st.position ?? 0]?.id;
+            const curMeta = curId ? await client.publicTrack(curId) : null;
+            const live = isQueueLive(st, Number(curMeta?.duration) || null, Date.now());
+            if (!live) {
+                const entries = await client.history(args.limit);
+                const tracks = await client.tracksByIds(entries.map((e) => e.id));
+                const byId = new Map(tracks.map((t) => [t.id, t]));
+                const shaped = await shapeAll(
+                    client,
+                    entries.map((e) => byId.get(e.id) ?? ({ id: e.id } as PipeTrack)),
+                );
+                return json({
+                    source: 'history',
+                    note: 'no client is syncing the playback queue right now; showing listening history, most recent first',
+                    tracks: entries.map((e, i) => ({
+                        listenedAt: e.listenedAt,
+                        current: i === 0,
+                        ...shaped[i],
+                    })),
+                });
+            }
             const mediaList: { id: string; type: string; contextId: string | null }[] =
                 st.queue?.mediaList ?? [];
             const position: number = st.position ?? 0;
@@ -137,6 +163,7 @@ export function registerTools(server: McpServer, client: DeezerClient): void {
             const byId = new Map(tracks.map((t) => [t.id, t]));
             const contexts: { id: string; content: unknown }[] = st.queue?.contexts ?? [];
             return json({
+                source: 'queue',
                 position,
                 progressMS: st.progressMS ?? null,
                 updatedAt: st.updatedAt ?? null,
